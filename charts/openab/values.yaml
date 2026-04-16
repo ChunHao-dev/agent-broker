@@ -84,6 +84,9 @@ agents:
       apiKey: ""
       model: "whisper-large-v3-turbo"
       baseUrl: "https://api.groq.com/openai/v1"
+    cron:
+      enabled: false
+      dataFile: "cron_jobs.json"
     persistence:
       enabled: true
       storageClass: ""

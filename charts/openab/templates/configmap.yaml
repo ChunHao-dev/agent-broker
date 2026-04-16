@@ -68,6 +68,12 @@ data:
     model = "{{ ($cfg.stt).model | default "whisper-large-v3-turbo" }}"
     base_url = "{{ ($cfg.stt).baseUrl | default "https://api.groq.com/openai/v1" }}"
     {{- end }}
+    {{- if ($cfg.cron).enabled }}
+
+    [cron]
+    enabled = true
+    data_file = "{{ ($cfg.cron).dataFile | default "cron_jobs.json" }}"
+    {{- end }}
   {{- if $cfg.agentsMd }}
   AGENTS.md: |
     {{- $cfg.agentsMd | nindent 4 }}

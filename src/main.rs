@@ -1,5 +1,7 @@
 mod acp;
 mod config;
+mod cron_manager;
+mod cron_store;
 mod discord;
 mod error_display;
 mod format;
@@ -69,6 +71,12 @@ async fn main() -> anyhow::Result<()> {
                 "config loaded"
             );
 
+            if let Some(ref tz) = cfg.cron.default_tz {
+                cfg.agent.env.insert("OPENAB_DEFAULT_TZ".to_string(), tz.clone());
+            }
+
+            let agent_config = cfg.agent.clone();
+
             let pool = Arc::new(acp::SessionPool::new(cfg.agent, cfg.pool.max_sessions));
             let ttl_secs = cfg.pool.session_ttl_hours * 3600;
 
@@ -130,6 +138,19 @@ async fn main() -> anyhow::Result<()> {
             });
 
             info!("starting discord bot");
+
+            // Spawn cron manager to execute user-defined jobs
+            if cfg.cron.enabled {
+                let mut cron_mgr = cron_manager::CronManager::new(
+                    std::path::PathBuf::from(&cfg.cron.data_file),
+                    agent_config,
+                );
+                cron_mgr.register_delivery("discord", std::sync::Arc::new(
+                    cron_manager::DiscordDelivery { http: client.http.clone() },
+                ));
+                tokio::spawn(cron_mgr.start(30));
+            }
+
             client.start().await?;
 
             // Cleanup

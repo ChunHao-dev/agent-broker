@@ -22,3 +22,15 @@ base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 unicode-width = "0.2"
 libc = "0.2"
+chrono = { version = "0.4", features = ["serde"] }
+cron = "0.13"
+chrono-tz = "0.10"
+async-trait = "0.1"
+
+[[bin]]
+name = "openab"
+path = "src/main.rs"
+
+[[bin]]
+name = "openab-cron"
+path = "src/bin/openab_cron.rs"

@@ -2,9 +2,11 @@
 FROM rust:1-bookworm AS builder
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo 'fn main() {}' > src/main.rs && cargo build --release && rm -rf src
+RUN mkdir src && echo 'fn main() {}' > src/main.rs && \
+    mkdir -p src/bin && echo 'fn main() {}' > src/bin/openab_cron.rs && \
+    cargo build --release && rm -rf src
 COPY src/ src/
-RUN touch src/main.rs && cargo build --release
+RUN touch src/main.rs src/bin/openab_cron.rs && cargo build --release
 
 # --- Runtime stage ---
 FROM debian:bookworm-slim
@@ -36,9 +38,13 @@ ENV HOME=/home/agent
 WORKDIR /home/agent
 
 COPY --from=builder --chown=agent:agent /build/target/release/openab /usr/local/bin/openab
+COPY --from=builder --chown=agent:agent /build/target/release/openab-cron /usr/local/bin/openab-cron
+
+# Install openab-cron SKILL for kiro-cli (staged outside PVC, copied at startup)
+COPY --chown=agent:agent skills/openab-cron/SKILL.md /opt/openab-skills/openab-cron/SKILL.md
 
 USER agent
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD pgrep -x openab || exit 1
-ENTRYPOINT ["openab"]
-CMD ["/etc/openab/config.toml"]
+ENTRYPOINT ["sh", "-c", "mkdir -p $HOME/.kiro/skills && cp -r /opt/openab-skills/* $HOME/.kiro/skills/ 2>/dev/null; exec openab \"$@\"", "--"]
+CMD ["run", "/etc/openab/config.toml"]

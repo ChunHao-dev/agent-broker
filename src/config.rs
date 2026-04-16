@@ -41,6 +41,8 @@ pub struct Config {
     pub reactions: ReactionsConfig,
     #[serde(default)]
     pub stt: SttConfig,
+    #[serde(default)]
+    pub cron: CronConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -69,6 +71,24 @@ impl Default for SttConfig {
 fn default_stt_model() -> String { "whisper-large-v3-turbo".into() }
 fn default_stt_base_url() -> String { "https://api.groq.com/openai/v1".into() }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct CronConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_cron_data_file")]
+    pub data_file: String,
+    #[serde(default)]
+    pub default_tz: Option<String>,
+}
+
+impl Default for CronConfig {
+    fn default() -> Self {
+        Self { enabled: false, data_file: default_cron_data_file(), default_tz: None }
+    }
+}
+
+fn default_cron_data_file() -> String { "cron_jobs.json".into() }
+
 #[derive(Debug, Deserialize)]
 pub struct DiscordConfig {
     pub bot_token: String,
@@ -87,7 +107,7 @@ pub struct DiscordConfig {
     pub trusted_bot_ids: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct AgentConfig {
     pub command: String,
     #[serde(default)]

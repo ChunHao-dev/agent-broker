@@ -58,3 +58,7 @@ stall_soft_ms = 10000
 stall_hard_ms = 30000
 done_hold_ms = 1500
 error_hold_ms = 2500
+
+# [cron]
+# enabled = true                      # inject cron CLI context into agent prompts
+# data_file = "cron_jobs.json"        # where cron jobs are stored
