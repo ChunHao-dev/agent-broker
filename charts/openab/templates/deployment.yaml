@@ -38,12 +38,26 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           env:
-            {{- if $cfg.discord.botToken }}
+            {{- if and (ne (toString ($cfg.discord).enabled) "false") ($cfg.discord).botToken }}
             - name: DISCORD_BOT_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ include "openab.agentFullname" $d }}
                   key: discord-bot-token
+            {{- end }}
+            {{- if and ($cfg.slack).enabled ($cfg.slack).botToken }}
+            - name: SLACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "openab.agentFullname" $d }}
+                  key: slack-bot-token
+            {{- end }}
+            {{- if and ($cfg.slack).enabled ($cfg.slack).appToken }}
+            - name: SLACK_APP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "openab.agentFullname" $d }}
+                  key: slack-app-token
             {{- end }}
             {{- if and ($cfg.stt).enabled ($cfg.stt).apiKey }}
             - name: STT_API_KEY
@@ -77,6 +91,12 @@ spec:
             {{- if $cfg.agentsMd }}
             - name: config
               mountPath: {{ $cfg.workingDir | default "/home/agent" }}/AGENTS.md
+              subPath: AGENTS.md
+            - name: config
+              mountPath: {{ $cfg.workingDir | default "/home/agent" }}/CLAUDE.md
+              subPath: AGENTS.md
+            - name: config
+              mountPath: {{ $cfg.workingDir | default "/home/agent" }}/GEMINI.md
               subPath: AGENTS.md
             {{- end }}
       {{- with $cfg.nodeSelector }}
