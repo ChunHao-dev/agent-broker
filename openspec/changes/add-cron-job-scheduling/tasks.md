@@ -21,7 +21,7 @@
 
 ## 4. Integration
 
-- [x] 4.1 Inject `OPENAB_CHANNEL_ID` and `OPENAB_SOURCE` env in `src/acp/pool.rs` on spawn
+- [x] 4.1 Inject platform-prefixed `OPENAB_CHANNEL_ID` (e.g. `discord:123`) in `src/acp/pool.rs` on spawn, parsed from ChatAdapter thread_key
 - [x] 4.2 Inject `OPENAB_DEFAULT_TZ` from config into agent env in `src/main.rs`
 - [x] 4.3 Create SKILL.md at `skills/openab-cron/SKILL.md`
 - [x] 4.4 Update all Dockerfiles to copy SKILL.md to agent-specific paths:
@@ -33,3 +33,12 @@
 - [x] 4.6 Remove hardcoded weather job (`src/cron.rs`)
 - [x] 4.7 Remove redundant AGENTS.md (replaced by SKILL.md)
 - [x] 4.8 Build, deploy, verify
+
+## 5. Error Handling
+
+- [ ] 5.1 Add execution timeout (5 min) to `execute_prompt()` — kill agent process on timeout
+- [ ] 5.2 Track consecutive failure count per job, auto-pause after 3 failures, notify user
+- [ ] 5.3 Add retry with backoff for delivery send failures (1 retry, 5s delay)
+- [ ] 5.4 Classify error messages: spawn failure vs agent error vs delivery failure
+- [ ] 5.5 Show job health status in `openab-cron list` (last run status, failure count)
+- [ ] 5.6 Add exponential backoff for CronManager sync failures (30s → 60s → 120s)

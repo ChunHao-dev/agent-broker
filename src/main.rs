@@ -196,7 +196,7 @@ async fn main() -> anyhow::Result<()> {
                     let http = client.http.clone();
                     let mut cron_mgr = cron_manager::CronManager::new(
                         std::path::PathBuf::from(&cron_data_file),
-                        agent_config.clone(),
+                        std::sync::Arc::new(cron_manager::AcpExecutor { agent_config: agent_config.clone() }),
                     );
                     cron_mgr.register_delivery("discord", std::sync::Arc::new(
                         cron_manager::DiscordDelivery { http },

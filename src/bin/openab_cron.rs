@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 #[path = "../cron_store.rs"]
 mod cron_store;
-use cron_store::{CronJob, CronStore, DeliveryTarget, Schedule};
+use cron_store::{CronJob, CronStore, DeliveryTarget, JobHealth, Schedule};
 
 const DEFAULT_DATA_FILE: &str = "cron_jobs.json";
 const DEFAULT_MAX_JOBS: usize = 5;
@@ -53,6 +53,16 @@ enum Cmd {
         #[arg(long)]
         id: String,
     },
+    /// Pause a recurring job
+    Pause {
+        #[arg(long)]
+        id: String,
+    },
+    /// Resume a paused job
+    Resume {
+        #[arg(long)]
+        id: String,
+    },
     /// View or update cron settings
     Config {
         #[arg(long, help = "Set default timezone (e.g. Asia/Taipei)")]
@@ -77,19 +87,20 @@ fn parse_interval(s: &str) -> Result<u64, String> {
 }
 
 /// Resolve delivery target from explicit --thread or env vars.
+/// OPENAB_CHANNEL_ID format: "discord:123456789" or "slack:C0123"
 /// Priority: --thread > OPENAB_CHANNEL_ID > OPENAB_THREAD_ID (backward compat)
 fn resolve_target(explicit_thread: Option<u64>) -> anyhow::Result<DeliveryTarget> {
-    let source = std::env::var("OPENAB_SOURCE").unwrap_or_else(|_| "discord".into());
+    if let Some(t) = explicit_thread {
+        return Ok(DeliveryTarget { source: "discord".into(), channel_id: t.to_string() });
+    }
 
-    let channel_id = if let Some(t) = explicit_thread {
-        t.to_string()
-    } else if let Ok(id) = std::env::var("OPENAB_CHANNEL_ID") {
-        id
-    } else if let Ok(id) = std::env::var("OPENAB_THREAD_ID") {
-        id
-    } else {
-        anyhow::bail!("--thread not given and OPENAB_CHANNEL_ID/OPENAB_THREAD_ID not set");
-    };
+    let raw = std::env::var("OPENAB_CHANNEL_ID")
+        .or_else(|_| std::env::var("OPENAB_THREAD_ID"))
+        .map_err(|_| anyhow::anyhow!("--thread not given and OPENAB_CHANNEL_ID/OPENAB_THREAD_ID not set"))?;
+
+    let (source, channel_id) = raw.split_once(':')
+        .map(|(s, id)| (s.to_string(), id.to_string()))
+        .unwrap_or(("discord".into(), raw));
 
     Ok(DeliveryTarget { source, channel_id })
 }
@@ -186,34 +197,38 @@ fn main() {
 }
 
 fn run(cli: Cli) -> anyhow::Result<()> {
-    let mut store = CronStore::load(&cli.data_file)?;
-
     match cli.cmd {
         Cmd::Add { thread, interval, cron, at, tz, prompt, once } => {
             let target = resolve_target(thread)?;
+            // Need store settings for timezone resolution
+            let store = CronStore::load(&cli.data_file)?;
             let schedule = resolve_schedule(interval, cron, at, tz, store.settings.default_tz.clone(), cli.min_interval, once)?;
 
             if once && matches!(schedule, Schedule::Cron { .. }) {
                 anyhow::bail!("--once cannot be used with --cron (cron is inherently recurring)");
             }
             let once = once || matches!(schedule, Schedule::At { .. });
-
-            let count = store.jobs.values().filter(|j| j.target.channel_id == target.channel_id).count();
-            if count >= cli.max_jobs {
-                anyhow::bail!("channel already has {count}/{} jobs", cli.max_jobs);
-            }
             let id = uuid::Uuid::new_v4().to_string()[..8].to_string();
             let desc = format_schedule(&schedule);
-            let job = CronJob {
-                id: id.clone(),
-                target: target.clone(),
-                schedule,
-                prompt,
-                created_at: chrono::Utc::now(),
-                once,
-            };
-            store.jobs.insert(id.clone(), job);
-            store.save(&cli.data_file)?;
+            let max_jobs = cli.max_jobs;
+
+            CronStore::mutate_locked(&cli.data_file, |store| {
+                let count = store.jobs.values().filter(|j| j.target.channel_id == target.channel_id).count();
+                if count >= max_jobs {
+                    return;
+                }
+                store.jobs.insert(id.clone(), CronJob {
+                    id: id.clone(),
+                    target: target.clone(),
+                    schedule,
+                    prompt,
+                    created_at: chrono::Utc::now(),
+                    once,
+                    failed: false,
+                    paused: false,
+                    health: JobHealth::default(),
+                });
+            })?;
             if once {
                 println!("created one-time job {id} ({desc}, {}/{})", target.source, target.channel_id);
             } else {
@@ -221,6 +236,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             }
         }
         Cmd::List { thread, all } => {
+            let store = CronStore::load(&cli.data_file)?;
             let jobs: Vec<_> = if all {
                 store.jobs.values().collect()
             } else {
@@ -232,29 +248,196 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             } else {
                 for j in jobs {
                     let kind = if j.once { "once" } else { "recurring" };
-                    println!("  {} | {}/{} | {} | {} | {}", j.id, j.target.source, j.target.channel_id, kind, format_schedule(&j.schedule), j.prompt);
+                    let status = if j.paused {
+                        format!("⏸ paused ({}× failed)", j.health.consecutive_failures)
+                    } else if j.failed {
+                        "✗ failed".into()
+                    } else {
+                        match j.health.last_status.as_deref() {
+                            Some("ok") => "✓ ok".into(),
+                            Some("failed") => format!("⚠ failing ({}×)", j.health.consecutive_failures),
+                            _ => "- pending".into(),
+                        }
+                    };
+                    println!("  {} | {}/{} | {} | {} | {} | [{}] {}",
+                        j.id, j.target.source, j.target.channel_id,
+                        kind, format_schedule(&j.schedule), status,
+                        j.health.last_run.map(|t| t.format("%m-%d %H:%M").to_string()).unwrap_or_else(|| "never".into()),
+                        j.prompt,
+                    );
                 }
             }
         }
         Cmd::Remove { id } => {
-            if store.jobs.remove(&id).is_none() {
+            let mut found = false;
+            CronStore::mutate_locked(&cli.data_file, |store| {
+                found = store.jobs.remove(&id).is_some();
+            })?;
+            if !found {
                 anyhow::bail!("job '{id}' not found");
             }
-            store.save(&cli.data_file)?;
             println!("removed job {id}");
+        }
+        Cmd::Pause { id } => {
+            let mut found = false;
+            CronStore::mutate_locked(&cli.data_file, |store| {
+                if let Some(job) = store.jobs.get_mut(&id) {
+                    job.paused = true;
+                    found = true;
+                }
+            })?;
+            if !found {
+                anyhow::bail!("job '{id}' not found");
+            }
+            println!("paused job {id}");
+        }
+        Cmd::Resume { id } => {
+            let mut found = false;
+            CronStore::mutate_locked(&cli.data_file, |store| {
+                if let Some(job) = store.jobs.get_mut(&id) {
+                    job.paused = false;
+                    job.health.consecutive_failures = 0;
+                    found = true;
+                }
+            })?;
+            if !found {
+                anyhow::bail!("job '{id}' not found");
+            }
+            println!("resumed job {id}");
         }
         Cmd::Config { tz } => {
             if let Some(tz_str) = tz {
                 tz_str.parse::<chrono_tz::Tz>()
                     .map_err(|_| anyhow::anyhow!("invalid timezone: {tz_str}"))?;
-                store.settings.default_tz = Some(tz_str.clone());
-                store.save(&cli.data_file)?;
+                CronStore::mutate_locked(&cli.data_file, |store| {
+                    store.settings.default_tz = Some(tz_str.clone());
+                })?;
                 println!("default timezone set to {tz_str}");
             } else {
+                let store = CronStore::load(&cli.data_file)?;
                 let tz = store.settings.default_tz.as_deref().unwrap_or("UTC (no default set)");
                 println!("default timezone: {tz}");
             }
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn temp_path() -> PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!("cron_cli_test_{}.json", uuid::Uuid::new_v4()));
+        p
+    }
+
+    fn seed_store(path: &PathBuf) {
+        CronStore::mutate_locked(path, |store| {
+            store.jobs.insert("abc".into(), CronJob {
+                id: "abc".into(),
+                target: DeliveryTarget { source: "discord".into(), channel_id: "999".into() },
+                schedule: Schedule::Every { interval_secs: 60 },
+                prompt: "hello".into(),
+                created_at: chrono::Utc::now(),
+                once: false,
+                failed: false,
+                paused: false,
+                health: JobHealth::default(),
+            });
+        }).unwrap();
+    }
+
+    fn run_cmd(data_file: &PathBuf, cmd: Cmd) -> anyhow::Result<()> {
+        let cli = Cli {
+            data_file: data_file.clone(),
+            max_jobs: DEFAULT_MAX_JOBS,
+            min_interval: DEFAULT_MIN_INTERVAL,
+            cmd,
+        };
+        run(cli)
+    }
+
+    #[test]
+    fn test_pause_job() {
+        let path = temp_path();
+        seed_store(&path);
+
+        run_cmd(&path, Cmd::Pause { id: "abc".into() }).unwrap();
+
+        let store = CronStore::load(&path).unwrap();
+        assert!(store.jobs["abc"].paused);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn test_pause_nonexistent_job() {
+        let path = temp_path();
+        seed_store(&path);
+
+        let result = run_cmd(&path, Cmd::Pause { id: "nope".into() });
+        assert!(result.is_err());
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn test_resume_job_resets_failures() {
+        let path = temp_path();
+        seed_store(&path);
+
+        // Pause + set failures
+        CronStore::mutate_locked(&path, |store| {
+            let job = store.jobs.get_mut("abc").unwrap();
+            job.paused = true;
+            job.health.consecutive_failures = 3;
+        }).unwrap();
+
+        run_cmd(&path, Cmd::Resume { id: "abc".into() }).unwrap();
+
+        let store = CronStore::load(&path).unwrap();
+        assert!(!store.jobs["abc"].paused);
+        assert_eq!(store.jobs["abc"].health.consecutive_failures, 0);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn test_resume_nonexistent_job() {
+        let path = temp_path();
+        seed_store(&path);
+
+        let result = run_cmd(&path, Cmd::Resume { id: "nope".into() });
+        assert!(result.is_err());
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn test_list_shows_paused_status() {
+        let path = temp_path();
+        seed_store(&path);
+
+        CronStore::mutate_locked(&path, |store| {
+            let job = store.jobs.get_mut("abc").unwrap();
+            job.paused = true;
+            job.health.consecutive_failures = 2;
+        }).unwrap();
+
+        let store = CronStore::load(&path).unwrap();
+        let job = &store.jobs["abc"];
+        assert!(job.paused);
+        assert_eq!(job.health.consecutive_failures, 2);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn test_remove_then_pause_fails() {
+        let path = temp_path();
+        seed_store(&path);
+
+        run_cmd(&path, Cmd::Remove { id: "abc".into() }).unwrap();
+        let result = run_cmd(&path, Cmd::Pause { id: "abc".into() });
+        assert!(result.is_err());
+        std::fs::remove_file(&path).unwrap();
+    }
 }

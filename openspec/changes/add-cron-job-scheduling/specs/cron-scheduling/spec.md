@@ -60,11 +60,15 @@ The system SHALL provide an `openab-cron config` command to view and set the def
 The system SHALL resolve timezone in this order: explicit `--tz` flag > `OPENAB_DEFAULT_TZ` env var > store settings > UTC.
 
 ### Requirement: Inject environment variables on agent spawn
-The system SHALL inject `OPENAB_CHANNEL_ID`, `OPENAB_SOURCE`, and `OPENAB_DEFAULT_TZ` as environment variables when spawning an agent process.
+The system SHALL inject `OPENAB_CHANNEL_ID` with platform-prefixed format (e.g. `discord:123456789` or `slack:C0123`) and `OPENAB_DEFAULT_TZ` as environment variables when spawning an agent process. The prefix is parsed from the session pool key set by the ChatAdapter.
 
 #### Scenario: Agent process receives context
-- **WHEN** openAB spawns an agent process for channel 123
-- **THEN** the process environment contains `OPENAB_CHANNEL_ID=123`, `OPENAB_SOURCE=discord`
+- **WHEN** openAB spawns an agent process for a Discord channel 123
+- **THEN** the process environment contains `OPENAB_CHANNEL_ID=discord:123`
+
+#### Scenario: Agent process for Slack
+- **WHEN** openAB spawns an agent process for a Slack channel C0123
+- **THEN** the process environment contains `OPENAB_CHANNEL_ID=slack:C0123`
 
 ### Requirement: Expose cron tool via SKILL.md
 The system SHALL provide a SKILL.md file deployed to each agent's native skill path so the agent discovers the tool without per-message prompt injection.
@@ -98,3 +102,21 @@ The system SHALL persist jobs to JSON and execute them on schedule via independe
 #### Scenario: Channel deleted
 - **WHEN** delivery fails with "channel not found"
 - **THEN** the job is automatically removed
+
+### Requirement: Execution timeout
+The system SHALL enforce a maximum execution time per cron job. If the agent does not respond within the limit, the process is killed and the execution counts as a failure.
+
+#### Scenario: Agent hangs
+- **WHEN** a cron job's agent process does not respond within 5 minutes
+- **THEN** the process is killed and the job records a failure
+
+### Requirement: Auto-pause on consecutive failures
+The system SHALL track consecutive failure count per job. After 3 consecutive failures, the job is paused and the user is notified.
+
+#### Scenario: Job fails 3 times
+- **WHEN** a recurring job fails 3 times in a row
+- **THEN** the job is paused and a message is posted: "Job paused after 3 consecutive failures"
+
+#### Scenario: Job succeeds after failure
+- **WHEN** a previously failed job executes successfully
+- **THEN** the consecutive failure count resets to 0

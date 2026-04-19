@@ -1,6 +1,6 @@
 ## Context
 
-OpenAB is a Discord bot that bridges AI coding agents (Kiro, Claude, Codex, Gemini, Copilot) over ACP protocol. Each thread gets its own agent process via the session pool. Environment variables (`OPENAB_CHANNEL_ID`, `OPENAB_SOURCE`) are injected at agent spawn time.
+OpenAB bridges AI coding agents (Kiro, Claude, Codex, Gemini, Copilot) to Discord and Slack over ACP protocol. Each thread gets its own agent process via the session pool. The pool key uses a platform-prefixed format (`discord:123456789` or `slack:C0123`), which is injected as `OPENAB_CHANNEL_ID` at agent spawn time.
 
 ## Goals / Non-Goals
 
@@ -21,9 +21,11 @@ OpenAB is a Discord bot that bridges AI coding agents (Kiro, Claude, Codex, Gemi
 
 ## Decisions
 
-1. **Env-based channel ID and source over prompt injection**
-   - openAB injects `OPENAB_CHANNEL_ID` and `OPENAB_SOURCE` at agent spawn time
-   - `openab-cron` CLI reads env — AI never needs to pass these values
+1. **Platform-prefixed channel ID over separate env vars**
+   - openAB injects `OPENAB_CHANNEL_ID=discord:123456789` at agent spawn time
+   - Format: `<source>:<id>` — parsed by CLI into `source` + `channel_id` for job storage
+   - `DiscordDelivery` receives pure channel ID (after CLI splits it)
+   - Single env var carries both platform and ID — no separate `OPENAB_SOURCE` needed
    - Eliminates per-message token cost
 
 2. **SKILL.md for tool awareness, deployed per-agent**
@@ -57,3 +59,5 @@ OpenAB is a Discord bot that bridges AI coding agents (Kiro, Claude, Codex, Gemi
 - [Risk] Agent misformats CLI command → Mitigation: clear SKILL.md with examples; CLI returns helpful errors
 - [Risk] JSON file corruption on crash → Mitigation: atomic write (temp + rename)
 - [Risk] Thread deleted but job runs → Mitigation: auto-remove job on unknown channel error via `is_channel_gone()`
+- [Risk] Agent hangs indefinitely → Mitigation: 5-min execution timeout, kill process on expiry
+- [Risk] Job fails repeatedly wasting resources → Mitigation: auto-pause after 3 consecutive failures, notify user

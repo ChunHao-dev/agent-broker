@@ -72,9 +72,8 @@ impl SessionPool {
         }
 
         let mut env = self.config.env.clone();
+        // thread_id has platform prefix: "discord:123" or "slack:C0123"
         env.insert("OPENAB_CHANNEL_ID".to_string(), thread_id.to_string());
-        env.insert("OPENAB_SOURCE".to_string(), "discord".to_string());
-        // Keep OPENAB_THREAD_ID for backward compat
         env.insert("OPENAB_THREAD_ID".to_string(), thread_id.to_string());
 
         let mut conn = AcpConnection::spawn(
