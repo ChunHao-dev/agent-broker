@@ -33,6 +33,17 @@ pub struct JobHealth {
     pub last_run: Option<DateTime<Utc>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum CronMode {
+    Isolated,
+    Session,
+}
+
+impl Default for CronMode {
+    fn default() -> Self { Self::Isolated }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CronJob {
     pub id: String,
@@ -48,6 +59,10 @@ pub struct CronJob {
     pub paused: bool,
     #[serde(default)]
     pub health: JobHealth,
+    #[serde(default)]
+    pub mode: CronMode,
+    #[serde(default)]
+    pub heartbeat_file: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -126,6 +141,8 @@ mod tests {
             failed,
             paused: false,
             health: JobHealth::default(),
+            mode: CronMode::default(),
+            heartbeat_file: None,
         }
     }
 
@@ -315,6 +332,8 @@ mod tests {
         assert_eq!(job.health.consecutive_failures, 0);
         assert!(job.health.last_status.is_none());
         assert!(job.health.last_run.is_none());
+        assert_eq!(job.mode, CronMode::Isolated);
+        assert!(job.heartbeat_file.is_none());
     }
 
     #[test]

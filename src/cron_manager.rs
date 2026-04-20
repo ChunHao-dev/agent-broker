@@ -447,7 +447,7 @@ fn mark_job_failed(job_id: &str, data_file: &std::path::Path) -> anyhow::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cron_store::{CronJob, CronStore, DeliveryTarget, JobHealth, Schedule};
+    use crate::cron_store::{CronJob, CronMode, CronStore, DeliveryTarget, JobHealth, Schedule};
     use std::sync::atomic::{AtomicU32, Ordering};
 
     fn temp_path() -> PathBuf {
@@ -467,6 +467,8 @@ mod tests {
             failed: false,
             paused: false,
             health: JobHealth::default(),
+            mode: CronMode::default(),
+            heartbeat_file: None,
         }
     }
 

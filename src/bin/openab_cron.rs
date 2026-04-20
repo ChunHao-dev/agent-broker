@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 #[path = "../cron_store.rs"]
 mod cron_store;
-use cron_store::{CronJob, CronStore, DeliveryTarget, JobHealth, Schedule};
+use cron_store::{CronJob, CronMode, CronStore, DeliveryTarget, JobHealth, Schedule};
 
 const DEFAULT_DATA_FILE: &str = "cron_jobs.json";
 const DEFAULT_MAX_JOBS: usize = 5;
@@ -227,6 +227,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     failed: false,
                     paused: false,
                     health: JobHealth::default(),
+                    mode: CronMode::default(),
+                    heartbeat_file: None,
                 });
             })?;
             if once {
@@ -346,6 +348,8 @@ mod cli_tests {
                 failed: false,
                 paused: false,
                 health: JobHealth::default(),
+                mode: CronMode::default(),
+                heartbeat_file: None,
             });
         }).unwrap();
     }
